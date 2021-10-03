@@ -32,3 +32,6 @@
 *.app
 *.vscode
 src/convert.py
+src/*.json
+proto/
+src/__pycache__/

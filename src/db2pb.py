@@ -14,11 +14,9 @@ from pyfiglet import figlet_format
 
 try:
     import colorama
-
     colorama.init()
 except ImportError:
     colorama = None
-
 try:
     from termcolor import colored
 except ImportError:
@@ -42,7 +40,6 @@ def traverse(value, key=None):
             yield from traverse(v, k)
     else:
         yield key, value
-
 
 def correct_encoding(dictionary):
     """Correct the encoding of python dictionaries so they can be encoded to mongodb
@@ -189,7 +186,7 @@ def askInformation():
     return answers
 
 
-def generate_files(items):
+def generate_protos(items):
     try:
         group_table = groupby(items, itemgetter(0))
         for k, g in group_table:
@@ -202,9 +199,39 @@ def generate_files(items):
         if not os.path.exists(folder):
             os.mkdir(folder)
         os.chdir(folder)
+        db2pb = {
+            "bigint": "int64",
+            "int": "int32",    
+            "integer": "int32",
+            "numeric": "int32",
+            "tinyint": "sint32", 
+            "smallint": "sint32",   
+            "year"   : "int32" ,
+            "text": "string",
+            "tinytext": "string",    
+            "boolean": "bool",
+            "bit": "bool",
+            "float": "float",
+            "real": "double",
+            "double": "double",
+            "decimal": "double",
+            "char": "string",
+            "varchar": "string",
+            "longvarchar": "string",
+            "date": "google.protobuf.Timestamp",
+            "datetime": "google.protobuf.Timestamp",
+            "timestamp": "google.protobuf.Timestamp",
+            "binary": "bytes",
+            "varbinary": "bytes",
+            "longvarbinary": "bytes",
+            "blob": "fixed64",
+            "clob": "fixed64",
+            "enum" : "enum",
+            "set": "string"
+        }
         import shutil
         cwd = os.getcwd()
-        print(cwd)     
+        # print(cwd)     
         for filename in os.listdir(cwd):
             file_path = os.path.join(cwd, filename)
             try:
@@ -247,74 +274,20 @@ def generate_files(items):
                 write_line = "message {} {}".format(k.capitalize(), '{') 
                 the_file.write(write_line + '\n')          
                 index = 1
-                field_type = '' 
-                field = ''
                 for tup in list(g):
-                    field = tup[1]
-                    if (
-                        tup[2] == "int"
-                        or tup[2] == "integer"
-                        or tup[2] == "tinyint"
-                        or tup[2] == "smallint"
-                        or tup[2] == "mediumint"                        
-                        or tup[2] == "numeric"
-                        or tup[2] == "year"                        
-                    ):
-                        field_type = 'int32'
-                        write_line = "  int32 {} = {}; ".format(tup[1].ljust(len(tup[1]) + 1), index) 
-                        new_item_line.append(write_line)
-                    elif tup[2] == "bigint" :
-                        field_type = 'int64'                
-                        write_line = "  int64 {} = {}; ".format(tup[1], index)       
-                        new_item_line.append(write_line)                                     
-                    elif (
-                        tup[2] == "text"
-                        or tup[2] == "tinytext"
-                        or tup[2] == "char"
-                        or tup[2] == "varchar"
-                        or tup[2] == "longvarchar"
-                        or tup[2] == "set"                              
-                    ):
-                        field_type = 'string'
-                        write_line = "  string {} = {}; ".format(tup[1].ljust(len(tup[1]) + 1), index)
-                        new_item_line.append(write_line)
-                    elif tup[2] == "enum" or tup[2] == "set":
-                        field_type = 'enum'                
-                        write_line = "  enum {} {} \t\t TBD{} = 0; \n {} {} {} = {};" \
-                            .format(tup[1].capitalize(), '{\n', index,'}\n', tup[1].capitalize(),tup[1], index)
-                        new_item_line.append(write_line)                         
-                    elif tup[2] == "bool" or tup[2] == "boolean":
-                        field_type = 'bool'                
-                        write_line = "  bool {} = {};".format(tup[1], index)
-                        new_item_line.append(write_line)         
-                    elif tup[2] == "real" or tup[2] == "double" or tup[2] == "decimal":
-                        field_type = 'double'                
-                        write_line = "  double {} = {}; ".format(tup[1], index)
-                        new_item_line.append(write_line)                    
-                    elif tup[2] == "float":
-                        field_type = 'float'                
-                        write_line = "  float {} = {}; ".format(tup[1], index)
-                        new_item_line.append(write_line)                               
-                    elif tup[2] == "date" or tup[2] == "time" or tup[2] == "timestamp" or tup[2] == "datetime":
-                        field_type = 'google.protobuf.Timestamp'                
-                        write_line = "  google.protobuf.Timestamp {} = {}; ".format(tup[1].ljust(len(tup[1]) + 1), index)
-                        new_item_line.append(write_line)                             
-                    elif (
-                        tup[2] == "blob"
-                        or tup[2] == "clob"
-                    ):
-                        field_type = 'bytes'                
-                        write_line = "  bytes {} = {}; ".format(tup[1], index)
-                        new_item_line.append(write_line)                    
-                    elif (
-                        tup[2] == "binary"
-                        or tup[2] == "varbinary"
-                        or tup[2] == "longvarbinary"  ):
-                        field_type = 'fixed64'                
-                        write_line = "  fixed64 {} = {}; ".format(tup[1], index)
-                        new_item_line.append(write_line)                    
+                    for key, value in db2pb.items():                  
+                        if key == tup[2] and tup[2] != 'enum':
+                            write_line = "  {} {} = {}; ".format(value, tup[1].ljust(len(tup[1]) + 1), index) 
+                            new_item_line.append(write_line)
+                            break
+                        elif key == 'enum' :
+                            write_line = "  {} {} {} \t\t TBD{} = 0; \n {} {} {} = {};" \
+                                .format(value, tup[1].capitalize(), '{\n', index,'}\n', tup[1].capitalize(),tup[1], index)
+                            new_item_line.append(write_line)
+                            break   
+                    the_file.write(write_line + '\n')                                        
                     index += 1
-                    the_file.write(write_line + '\n')
+                # the_file.write(write_line + '\n')
                 write_line = "{}".format('}')             
                 the_file.write(write_line + '\n')
                 the_file.write('\n')             
@@ -352,7 +325,7 @@ def generate_files(items):
         print(type(err))    # the exception instance
         print(err)          # __str__ allows args to be printed directly,
 
-def get_data(db_info):
+def get_schema(db_info):
     try:
         conn = mariadb.connect(
             user=db_info["username"],
@@ -380,7 +353,7 @@ def get_data(db_info):
     items = cur.fetchall()
     # for write_line in items:
     #     pprint(write_line)
-    generate_files(items)
+    generate_protos(items)
     
     conn.commit()
     # Close Connection
@@ -418,7 +391,7 @@ def main():
     log("CLI : >", color="blue", figlet=True)
 
     db_info = askInformation()
-    get_data(db_info)
+    get_schema(db_info)
     compile_protos()
 
 if __name__ == "__main__":
