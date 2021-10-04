@@ -11,6 +11,7 @@ from PyInquirer import style_from_dict, Token, Separator
 from PyInquirer import prompt, ValidationError, Validator
 from termcolor import colored
 from pyfiglet import figlet_format
+from mongoschema import Schema
 
 try:
     import colorama
@@ -185,8 +186,7 @@ def askInformation():
 
     return answers
 
-
-def generate_protos(items):
+def generate_protos(items, db_info):
     try:
         group_table = groupby(items, itemgetter(0))
         for k, g in group_table:
@@ -195,7 +195,8 @@ def generate_protos(items):
             table_tuple = [g[1:] for g in g]
 
         folder = "proto"
-        os.system("echo generating proto files")
+        log("Generating proto files in proto folder", "green")
+
         if not os.path.exists(folder):
             os.mkdir(folder)
         os.chdir(folder)
@@ -249,8 +250,10 @@ def generate_protos(items):
 
                 write_line = "import 'google/protobuf/timestamp.proto';"         
                 the_file.write(write_line + '\n')
-                
-                write_line = "package {};".format(k.capitalize())            
+
+                write_line = "import 'google/api/annotations.proto';"         
+                the_file.write(write_line + '\n')             
+                write_line = "package {};".format(db_info["database"].capitalize())            
                 the_file.write(write_line + '\n')
                 the_file.write('\n')               
                 service_name = k.capitalize() + "Service"            
@@ -320,7 +323,7 @@ def generate_protos(items):
                 the_file.write(write_line + '\n')              
                 write_line = "{}".format('}')  
                 the_file.write(write_line)                            
-   
+        log("Generating proto files done", "green")   
     except Exception as err:
         print(type(err))    # the exception instance
         print(err)          # __str__ allows args to be printed directly,
@@ -337,7 +340,7 @@ def get_schema(db_info):
     except mariadb.Error as e:
         print(f"Error connecting to MariaDB Platform: {e}")
         sys.exit(1)
-
+    log("fetching db schema ", "green")
     # Get Cursor
     cur = conn.cursor()
     cur.execute(
@@ -353,7 +356,9 @@ def get_schema(db_info):
     items = cur.fetchall()
     # for write_line in items:
     #     pprint(write_line)
-    generate_protos(items)
+    log("db schema done", "green")
+ 
+    generate_protos(items, db_info)
     
     conn.commit()
     # Close Connection
@@ -387,8 +392,8 @@ def main():
     """
     Simple CLI
     """
-    log("Welcome to DB2PB CLI", "green")
-    log("CLI : >", color="blue", figlet=True)
+    log(">>>>> Welcome to DB2PB CLI", color="blue", figlet=False)
+    # log("CLI : >", color="blue", figlet=True)
 
     db_info = askInformation()
     get_schema(db_info)
