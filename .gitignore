@@ -35,3 +35,5 @@ src/convert.py
 src/*.json
 proto/
 src/__pycache__/
+src/iterabless.py
+src/mongodb_collect.py

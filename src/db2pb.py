@@ -9,10 +9,19 @@ import mariadb
 import numpy as np
 from PyInquirer import style_from_dict, Token, Separator
 from PyInquirer import prompt, ValidationError, Validator
+# from pymongo_schema.compare import compare_schemas_bases
+# from pymongo_schema.export import transform_data_to_file
+from pymongo_schema.extract import extract_pymongo_client_schema
+# from pymongo_schema.filter import filter_mongo_schema_namespaces
+# from pymongo_schema.tosql import mongo_schema_to_mapping
+import pymongo
+# from pymongo_schema.extract import extract_pymongo_client_schema
 from termcolor import colored
 from pyfiglet import figlet_format
-from mongoschema import Schema
+# from mongoschema import Schema
 
+import json as json
+from pprint import pprint
 try:
     import colorama
     colorama.init()
@@ -80,7 +89,6 @@ def log(string, color, font="slant", figlet=False):
     else:
         six.print_(string)
 
-
 class FilePathValidator(Validator):
     def validate(self, value):
         if len(value.text):
@@ -123,8 +131,67 @@ class NumberValidator(Validator):
 #         print "\n Starting " + self.name
 #         self.sample()
 
+def iterable(cls):
+    def iterfn(self):
+        iters = dict((x,y) for x,y in cls.__dict__.items() if x[:2] != '__')
+        iters.update(self.__dict__)
 
-def askInformation():
+        for x,y in iters.items():
+            yield x,y
+
+    cls.__iter__ = iterfn
+    return cls
+
+@iterable
+class dbtype2pbtype(object):
+    def __init__(self):
+        self.string = "string"
+        self.object =  "fixed64"
+        self.array =  "bytes"
+        self.binData =  "bytes"
+        self.undefined =  "bytes"
+        self.objectId =  "bytes"
+        self.bool =  "bool"
+        self.null =  "bytes"
+        self.regex = "string"
+        self.dbPointer =  "bytes"
+        self.javascript =  "bytes"
+        self.symbol =  "bytes"
+        self.javascriptWithScope =  "bytes"
+        self.long = "int64"
+        self.minKey =  "sint32" 
+        self.maxKey =  "sint32" 
+        self.bigint =  "int64"
+        self.int =  "int32"    
+        self.integer =  "int32"
+        self.numeric =  "int32"
+        self.tinyint =  "sint32" 
+        self.smallint =  "sint32"   
+        self.year = "int32" 
+        self.text =  "string"
+        self.tinytext =  "string"    
+        self.boolean =  "bool"
+        self.bit =  "bool"
+        self.float =  "float"
+        self.real =  "double"
+        self.double =  "double"
+        self.decimal =  "double"
+        self.char =  "string"
+        self.varchar =  "string"
+        self.longvarchar =  "string"
+        self.date =  "google.protobuf.Timestamp"
+        self.datetime =  "google.protobuf.Timestamp"
+        self.timestamp =  "google.protobuf.Timestamp"
+        self.binary =  "bytes"
+        self.varbinary =  "bytes"
+        self.longvarbinary =  "bytes"
+        self.blob =  "fixed64"
+        self.clob =  "fixed64"
+        self.enum = "Enum"
+        self.set =  "string"
+  
+
+def app_data():
     questions = [
         {
             "type": "checkbox",
@@ -132,15 +199,15 @@ def askInformation():
             "name": "sqlnosql",
             "choices": [
                 Separator("  "),
-                {"name": "SQL", "checked": True},
-                {"name": "NoSQL"},
+                {"name": "SQL"},
+                {"name": "NoSQL", "checked": True},
             ],
         },
         {
             "type": "input",
             "name": "dbms",
             "message": "What's your DBMS?",
-            "default": "mariadb",
+            "default": "mongodb",
         },
         {
             "type": "input",
@@ -158,7 +225,7 @@ def askInformation():
             "type": "input",
             "name": "database",
             "message": "Enter your db name: ",
-            "default": "sakila",
+            "default": "Squaddb",
         },
         {
             "type": "input",
@@ -170,165 +237,169 @@ def askInformation():
             "type": "input",
             "name": "port",
             "message": "Enter your db port: ",
-            "default": "3306",
+            "default": "27017",
             "validate": NumberValidator,
             "filter": lambda val: int(val),
         },
         {
             "type": "input",
-            "name": "proto",
+            "name": "proto_folder",
             "message": "Enter your working folder: ",
-            "default": "../proto",
+            "default": "proto",
         },
     ]
     # answers = prompt(questions, style=custom_style_2)
     answers = prompt(questions, style=style)
-
+    #
     return answers
 
-def generate_protos(items, db_info):
+def generate_nosql_protos(collection, db_info):
+    try:
+        # folder = "proto"
+        log("Generating proto files in proto folder", "green")
+        db2pb = dict(dbtype2pbtype())                   
+        for values in list(collection.values()):   
+            for k, items in values.items():               
+                # print('>>>>>>>>>>', k, ' === ', type(value))
+                with open(k.capitalize() + '.proto', 'a') as the_file:
+                    new_item_line = write_file_head(the_file, db_info, k)          
+                    index = 1
+                    for item_k, item_val in items.items():
+                        if type(item_val) == dict:
+                            for item_kk, item_val_val in item_val.items():
+                                if item_kk == '_id' or item_kk == 'createdAt' or  item_kk == 'updatedAt':
+                                    continue                                                                
+                                pbtype = db2pb.get(item_val_val['type'])
+                                write_line = "  {} {} = {}; ".format(pbtype, item_kk.ljust(len(item_kk) + 1), index) 
+                                new_item_line.append(write_line)                                
+                                the_file.write(write_line + '\n')                                        
+                                index += 1
+                    flush_remains(the_file, k, new_item_line)
+                                                                                     
+        log("Generating proto files done", "green")                 
+    except Exception as err:
+        print(type(err))    # the exception instance
+        print(err)          # __str__ allows args to be printed directly,
+
+# def flush_remains(the_file, write_line, k, new_item_line):
+#     newmethod459(the_file, k, new_item_line)                            
+    
+def generate_sql_protos(items, db_info):
     try:
         group_table = groupby(items, itemgetter(0))
         for k, g in group_table:
             if k == 'view' :
                 continue
             table_tuple = [g[1:] for g in g]
-
-        folder = "proto"
-        log("Generating proto files in proto folder", "green")
-
-        if not os.path.exists(folder):
-            os.mkdir(folder)
-        os.chdir(folder)
-        db2pb = {
-            "bigint": "int64",
-            "int": "int32",    
-            "integer": "int32",
-            "numeric": "int32",
-            "tinyint": "sint32", 
-            "smallint": "sint32",   
-            "year"   : "int32" ,
-            "text": "string",
-            "tinytext": "string",    
-            "boolean": "bool",
-            "bit": "bool",
-            "float": "float",
-            "real": "double",
-            "double": "double",
-            "decimal": "double",
-            "char": "string",
-            "varchar": "string",
-            "longvarchar": "string",
-            "date": "google.protobuf.Timestamp",
-            "datetime": "google.protobuf.Timestamp",
-            "timestamp": "google.protobuf.Timestamp",
-            "binary": "bytes",
-            "varbinary": "bytes",
-            "longvarbinary": "bytes",
-            "blob": "fixed64",
-            "clob": "fixed64",
-            "enum" : "enum",
-            "set": "string"
-        }
-        import shutil
-        cwd = os.getcwd()
-        # print(cwd)     
-        for filename in os.listdir(cwd):
-            file_path = os.path.join(cwd, filename)
-            try:
-                if os.path.isfile(file_path) or os.path.islink(file_path):
-                    os.unlink(file_path)
-                elif os.path.isdir(file_path):
-                    shutil.rmtree(file_path)
-            except Exception as e:
-                print('Failed to delete %s. Reason: %s' % (file_path, e))
+        db2pb = dict(dbtype2pbtype())
         group_table = groupby(table_tuple, itemgetter(0))
         for k, g in group_table:
             with open(k + '.proto', 'a') as the_file:
-                write_line = "syntax = {}".format("'proto3';")            
-                the_file.write(write_line + '\n')   
-
-                write_line = "import 'google/protobuf/timestamp.proto';"         
-                the_file.write(write_line + '\n')
-
-                write_line = "import 'google/api/annotations.proto';"         
-                the_file.write(write_line + '\n')             
-                write_line = "package {};".format(db_info["database"].capitalize())            
-                the_file.write(write_line + '\n')
-                the_file.write('\n')               
-                service_name = k.capitalize() + "Service"            
-                write_line = "service {} {}".format(service_name, '{') 
-                the_file.write(write_line + '\n')
-                write_line = "  rpc list{}s(Empty) returns ({}List) {}".format(k.capitalize(), k.capitalize(), '{}')
-                the_file.write(write_line + '\n')
-                write_line = "  rpc read{}({}Id) returns ({}) {}".format(k.capitalize(), k.capitalize() , k.capitalize(), '{}')          
-                the_file.write(write_line + '\n')  
-                write_line = "  rpc create{}(new{}) returns ({}) {}".format(k.capitalize() , k.capitalize(), 'result', '{}')          
-                the_file.write(write_line + '\n')
-                write_line = "  rpc update{}({}) returns ({}) {}".format(k.capitalize() , k.capitalize(), 'result', '{}')          
-                the_file.write(write_line + '\n')                         
-                write_line = "  rpc delete{}({}) returns ({}) {}".format(k.capitalize() , k.capitalize(), 'result', '{}')          
-                the_file.write(write_line + '\n')
-                write_line = "{}".format('}')  
-                the_file.write(write_line + '\n')
-                the_file.write('\n')
-                new_item_line = []
-                new_item_line.append("message new{} {}".format(k.capitalize(), '{') )                           
-                write_line = "message {} {}".format(k.capitalize(), '{') 
-                the_file.write(write_line + '\n')          
+                new_item_line = write_file_head(the_file, db_info, k)          
                 index = 1
                 for tup in list(g):
-                    for key, value in db2pb.items():                  
-                        if key == tup[2] and tup[2] != 'enum':
-                            write_line = "  {} {} = {}; ".format(value, tup[1].ljust(len(tup[1]) + 1), index) 
-                            new_item_line.append(write_line)
-                            break
-                        elif key == 'enum' :
-                            write_line = "  {} {} {} \t\t TBD{} = 0; \n {} {} {} = {};" \
-                                .format(value, tup[1].capitalize(), '{\n', index,'}\n', tup[1].capitalize(),tup[1], index)
-                            new_item_line.append(write_line)
-                            break   
+                    pbtype = db2pb.get(tup[2])
+                    # for key, value in db2pb.items():                  
+                    if tup[2] != 'enum':
+                        write_line = "  {} {} = {}; ".format(pbtype, tup[1].ljust(len(tup[1]) + 1), index) 
+                        new_item_line.append(write_line)
+                    else :
+                        write_line = "  {} {} {} \t\t TBD{} = 0; \n {} {} {} = {};" \
+                            .format(pbtype, tup[1].capitalize(), '{\n', index,'}\n', tup[1].capitalize(),tup[1], index)
+                        new_item_line.append(write_line)
                     the_file.write(write_line + '\n')                                        
                     index += 1
                 # the_file.write(write_line + '\n')
-                write_line = "{}".format('}')             
-                the_file.write(write_line + '\n')
-                the_file.write('\n')             
-                write_line = "message {} {}".format('Empty', '{}') 
-                the_file.write(write_line + '\n')  
-                the_file.write('\n')
-
-                write_line = "message {}List {}".format(k.capitalize(), '{') 
-                the_file.write(write_line + '\n')
-                write_line = "  repeated {} {}s = 1;".format(k.capitalize() , k)
-                the_file.write(write_line + '\n')              
-                write_line = "{}".format('}')  
-                the_file.write(write_line + '\n')
-                the_file.write('\n')            
-                                                                        
-                write_line = "message {}Id {}".format(k.capitalize(), '{') 
-                the_file.write(write_line + '\n')
-                write_line = "  int32 id = 1;" 
-                the_file.write(write_line + '\n')              
-                write_line = "{}".format('}')
-                the_file.write(write_line + '\n')             
-                the_file.write('\n')   
-                for item in new_item_line:
-                    the_file.write("%s\n" % item)            
-                write_line = "{}".format('}')
-                the_file.write(write_line + '\n')
-                write_line = "message result {}".format('{') 
-                the_file.write(write_line + '\n')
-                write_line = "  string status = 1;"
-                the_file.write(write_line + '\n')              
-                write_line = "{}".format('}')  
-                the_file.write(write_line)                            
+                # flush_remains(the_file,write_line, k, new_item_line)
+                flush_remains(the_file, k, new_item_line)                            
         log("Generating proto files done", "green")   
     except Exception as err:
         print(type(err))    # the exception instance
         print(err)          # __str__ allows args to be printed directly,
 
-def get_schema(db_info):
+def flush_remains(the_file, k, new_item_line):
+    write_line = "{}".format('}')             
+    the_file.write(write_line + '\n')
+    the_file.write('\n')             
+    write_line = "message {} {}".format('Empty', '{}') 
+    the_file.write(write_line + '\n')  
+    the_file.write('\n')
+
+    write_line = "message {}List {}".format(k.capitalize(), '{') 
+    the_file.write(write_line + '\n')
+    write_line = "  repeated {} {}s = 1;".format(k.capitalize() , k)
+    the_file.write(write_line + '\n')              
+    write_line = "{}".format('}')  
+    the_file.write(write_line + '\n')
+    the_file.write('\n')            
+
+    write_line = "message {}Id {}".format(k.capitalize(), '{') 
+    the_file.write(write_line + '\n')
+    write_line = "  int32 id = 1;" 
+    the_file.write(write_line + '\n')              
+    write_line = "{}".format('}')
+    the_file.write(write_line + '\n')             
+    the_file.write('\n')   
+    for item in new_item_line:
+        the_file.write("%s\n" % item)            
+    write_line = "{}".format('}')
+    the_file.write(write_line + '\n')
+    write_line = "message result {}".format('{') 
+    the_file.write(write_line + '\n')
+    write_line = "  string status = 1;"
+    the_file.write(write_line + '\n')              
+    write_line = "{}".format('}')  
+    the_file.write(write_line)                            
+
+def write_file_head(the_file, db_info, k):
+    write_line = "syntax = {}".format("'proto3';")            
+    the_file.write(write_line + '\n')   
+
+    write_line = "import 'google/protobuf/timestamp.proto';"         
+    the_file.write(write_line + '\n')
+
+    write_line = "import 'google/api/annotations.proto';"         
+    the_file.write(write_line + '\n')             
+    write_line = "package {};".format(db_info["database"].capitalize())            
+    the_file.write(write_line + '\n')
+    the_file.write('\n')               
+    service_name = k.capitalize() + "Service"            
+    write_line = "service {} {}".format(service_name, '{') 
+    the_file.write(write_line + '\n')
+    write_line = "  rpc list{}s(Empty) returns ({}List) {}".format(k.capitalize(), k.capitalize(), '{}')
+    the_file.write(write_line + '\n')
+    write_line = "  rpc read{}({}Id) returns ({}) {}".format(k.capitalize(), k.capitalize() , k.capitalize(), '{}')          
+    the_file.write(write_line + '\n')  
+    write_line = "  rpc create{}(new{}) returns ({}) {}".format(k.capitalize() , k.capitalize(), 'result', '{}')          
+    the_file.write(write_line + '\n')
+    write_line = "  rpc update{}({}) returns ({}) {}".format(k.capitalize() , k.capitalize(), 'result', '{}')          
+    the_file.write(write_line + '\n')                         
+    write_line = "  rpc delete{}({}) returns ({}) {}".format(k.capitalize() , k.capitalize(), 'result', '{}')          
+    the_file.write(write_line + '\n')
+    write_line = "{}".format('}')  
+    the_file.write(write_line + '\n')
+    the_file.write('\n')
+    new_item_line = []
+    new_item_line.append("message new{} {}".format(k.capitalize(), '{') )                           
+    write_line = "message {} {}".format(k.capitalize(), '{') 
+    the_file.write(write_line + '\n')          
+    return new_item_line
+
+def get_nosql_schema(db_info):
+    try:
+        pymongo_client = pymongo.MongoClient(db_info["host"], 27017, maxPoolSize=50)
+        db = pymongo_client[db_info["database"]]  
+        collections = db.list_collection_names()
+        for collection in enumerate(collections):    
+            coll_schema = extract_pymongo_client_schema(pymongo_client,
+                                                            database_names=db_info["database"],
+                                                            collection_names=collection)
+            generate_nosql_protos(coll_schema, db_info )
+    except Exception as err:
+        print(type(err))    # the exception instance
+        print(err)          # __str__ allows args to be printed directly,   
+    
+def get_sql_schema(db_info):
     try:
         conn = mariadb.connect(
             user=db_info["username"],
@@ -358,7 +429,7 @@ def get_schema(db_info):
     #     pprint(write_line)
     log("db schema done", "green")
  
-    generate_protos(items, db_info)
+    generate_sql_protos(items, db_info)
     
     conn.commit()
     # Close Connection
@@ -395,9 +466,27 @@ def main():
     log(">>>>> Welcome to DB2PB CLI", color="blue", figlet=False)
     # log("CLI : >", color="blue", figlet=True)
 
-    db_info = askInformation()
-    get_schema(db_info)
-    compile_protos()
+    db_info = app_data()
+    if not os.path.exists(db_info['proto_folder']):
+        os.mkdir(db_info['proto_folder'])
+    os.chdir(db_info['proto_folder'])
+    import shutil
+    cwd = os.getcwd()
+    # print(cwd)     
+    for filename in os.listdir(cwd):
+        file_path = os.path.join(cwd, filename)
+        try:
+            if os.path.isfile(file_path) or os.path.islink(file_path):
+                os.unlink(file_path)
+            elif os.path.isdir(file_path):
+                shutil.rmtree(file_path)
+        except Exception as e:
+            print('Failed to delete %s. Reason: %s' % (file_path, e))       
+    if db_info["sqlnosql"] == 'SQL' :
+        get_sql_schema(db_info)
+    else:  
+        get_nosql_schema(db_info)  
+    # compile_protos()
 
 if __name__ == "__main__":
     main()
