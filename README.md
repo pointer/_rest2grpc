@@ -6,7 +6,7 @@ Experiment to migrate REST system to gRPC :
 - Use of Python and Pandas to Generate Protobuf files,
 - Use of Python and protoc to compile Proto files to C++,
 - Generate GRPC Server and GRPC client,
-- Use of gRPC Ecosystem gRPC-Gateway, OpenAPI and gRPC
+- Use of gRPC Ecosystem gRPC-Gateway, OpenAPI and protoc-gen-swagger
 - Use C++ Boost Beast to link GRPC Server to REST Server, and GRPC Client to REST Client.
 - REST Client will connect to Boost Beast API in the GRPC client locally on client pc
 - Upon client request the Boost Beast API call the GRPC Client corresponding function
