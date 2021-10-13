@@ -6,6 +6,7 @@ import six
 from itertools import groupby
 from operator import itemgetter
 import mariadb
+import inspect
 import numpy as np
 from PyInquirer import style_from_dict, Token, Separator
 from PyInquirer import prompt, ValidationError, Validator
@@ -131,6 +132,17 @@ class NumberValidator(Validator):
 #         print "\n Starting " + self.name
 #         self.sample()
 
+def string_locals(template, **kwargs):
+    if not kwargs:
+        frame = inspect.currentframe()
+        try:
+            kwargs = frame.f_back.f_locals
+        finally:
+            del frame
+        if not kwargs:
+            kwargs = globals()
+    return template.format(**kwargs)
+
 def iterable(cls):
     def iterfn(self):
         iters = dict((x,y) for x,y in cls.__dict__.items() if x[:2] != '__')
@@ -149,15 +161,15 @@ class dbtype2pbtype(object):
         self.object =  "fixed64"
         self.array =  "bytes"
         self.binData =  "bytes"
-        self.undefined =  "bytes"
-        self.objectId =  "bytes"
+        self.undefined =  "google.protobuf.Any"
+        self.objectId =  "google.protobuf.Any"
         self.bool =  "bool"
         self.null =  "bytes"
         self.regex = "string"
-        self.dbPointer =  "bytes"
-        self.javascript =  "bytes"
-        self.symbol =  "bytes"
-        self.javascriptWithScope =  "bytes"
+        self.dbPointer =  "google.protobuf.Any"
+        self.javascript =  "google.protobuf.Any"
+        self.symbol =  "google.protobuf.Any"
+        self.javascriptWithScope =  "google.protobuf.Any"
         self.long = "int64"
         self.minKey =  "sint32" 
         self.maxKey =  "sint32" 
@@ -189,9 +201,16 @@ class dbtype2pbtype(object):
         self.clob =  "fixed64"
         self.enum = "Enum"
         self.set =  "string"
-  
 
-def app_data():
+
+class Sql:
+    def generate_proto(self):
+        pass
+class Nosql:
+    def generate_proto(self):
+        pass
+    
+def get_user_input():
     questions = [
         {
             "type": "checkbox",
@@ -199,15 +218,15 @@ def app_data():
             "name": "sqlnosql",
             "choices": [
                 Separator("  "),
-                {"name": "SQL"},
-                {"name": "NoSQL", "checked": True},
+                {"name": "SQL" , "checked": True},
+                {"name": "NoSQL", "checked": False},
             ],
         },
         {
             "type": "input",
             "name": "dbms",
             "message": "What's your DBMS?",
-            "default": "mongodb",
+            "default": "mariadb",
         },
         {
             "type": "input",
@@ -225,7 +244,7 @@ def app_data():
             "type": "input",
             "name": "database",
             "message": "Enter your db name: ",
-            "default": "Squaddb",
+            "default": "sakila",
         },
         {
             "type": "input",
@@ -237,7 +256,7 @@ def app_data():
             "type": "input",
             "name": "port",
             "message": "Enter your db port: ",
-            "default": "27017",
+            "default": "3306",
             "validate": NumberValidator,
             "filter": lambda val: int(val),
         },
@@ -247,6 +266,12 @@ def app_data():
             "message": "Enter your working folder: ",
             "default": "proto",
         },
+        {
+            "type": "input",
+            "name": "api",
+            "message": "Enter your rest api : ",
+            "default": "/v1/",
+        }
     ]
     # answers = prompt(questions, style=custom_style_2)
     answers = prompt(questions, style=style)
@@ -262,7 +287,7 @@ def generate_nosql_protos(collection, db_info):
             for k, items in values.items():               
                 # print('>>>>>>>>>>', k, ' === ', type(value))
                 with open(k.capitalize() + '.proto', 'a') as the_file:
-                    new_item_line = write_file_head(the_file, db_info, k)          
+                    new_item_line = write_proto_head(the_file, db_info, k)          
                     index = 1
                     for item_k, item_val in items.items():
                         if type(item_val) == dict:
@@ -274,50 +299,115 @@ def generate_nosql_protos(collection, db_info):
                                 new_item_line.append(write_line)                                
                                 the_file.write(write_line + '\n')                                        
                                 index += 1
-                    flush_remains(the_file, k, new_item_line)
+                    write_proto_bottom(the_file, k, new_item_line)
                                                                                      
         log("Generating proto files done", "green")                 
     except Exception as err:
         print(type(err))    # the exception instance
         print(err)          # __str__ allows args to be printed directly,
-
-# def flush_remains(the_file, write_line, k, new_item_line):
-#     newmethod459(the_file, k, new_item_line)                            
-    
+ 
 def generate_sql_protos(items, db_info):
     try:
         group_table = groupby(items, itemgetter(0))
-        for k, g in group_table:
-            if k == 'view' :
+        for kg, g in group_table:
+            if kg == 'view' :
                 continue
             table_tuple = [g[1:] for g in g]
         db2pb = dict(dbtype2pbtype())
         group_table = groupby(table_tuple, itemgetter(0))
         for k, g in group_table:
+            required_list = []
+            # my_option = (
+            #     "option (grpc.gateway.protoc_gen_swagger.options.openapiv2_schema) = { \
+            #     '\t''\t' json_schema : { '\n' '\t'", \
+            #     '\t' '\t'title : {0} '\n'".format(k.capitalize()),
+            #     "description" :  "'\t' description : 'Does something neat' + '\n'",
+            #     "required" : "'\t' required: ['+ {1} + '] '\n' } '\n' }};"                     
+            # )            
+            my_option = "option (grpc.gateway.protoc_gen_swagger.options.openapiv2_schema) = { "
+            my_json_schema = "\n json_schema : { \n"
+            my_title = f"\t title : {k.capitalize()} \n"
+            my_description=  "\t description : Does something neat \n"
+            # my_required = f"\t required: string_locals(required_list, **locals()) \n }} \n }};" 
+      
             with open(k + '.proto', 'a') as the_file:
-                new_item_line = write_file_head(the_file, db_info, k)          
+                new_item_line = write_proto_head(the_file, db_info, k)
+                field_list = []
+                # option = "{} {} {} {} {}".format(my_option,my_json_schema, my_title, my_description, my_required )
                 index = 1
                 for tup in list(g):
                     pbtype = db2pb.get(tup[2])
-                    # for key, value in db2pb.items():                  
+                    # for key, value in db2pb.items(): 
+                    required_list.append(tup[1])
                     if tup[2] != 'enum':
-                        write_line = "  {} {} = {}; ".format(pbtype, tup[1].ljust(len(tup[1]) + 1), index) 
-                        new_item_line.append(write_line)
+                        write_sub_line = f" {pbtype} {tup[1].ljust(len(tup[1]) + 1)} = {index};"
+                        new_item_line.append(write_sub_line)
+                        field_list.append(write_sub_line) 
                     else :
-                        write_line = "  {} {} {} \t\t TBD{} = 0; \n {} {} {} = {};" \
+                        write_sub_line = " {} {} {} \t\t TBD{} = 0; \n {} {} {} = {};" \
                             .format(pbtype, tup[1].capitalize(), '{\n', index,'}\n', tup[1].capitalize(),tup[1], index)
-                        new_item_line.append(write_line)
-                    the_file.write(write_line + '\n')                                        
-                    index += 1
-                # the_file.write(write_line + '\n')
-                # flush_remains(the_file,write_line, k, new_item_line)
-                flush_remains(the_file, k, new_item_line)                            
+                        new_item_line.append(write_sub_line)
+                        field_list.append(write_sub_line) 
+                    index += 1                    
+                for field in field_list:
+                    the_file.write(''.join(field) )                                                                                                
+                    the_file.write('\n')  
+                                                                                                                  
+                option = f"{my_option} {my_json_schema} {my_title} {my_description} \trequired: {required_list} \n }} \n }};"                                                     
+                the_file.write(option + '\n')                      
+
+                write_proto_bottom(the_file, k, new_item_line)                            
         log("Generating proto files done", "green")   
     except Exception as err:
         print(type(err))    # the exception instance
         print(err)          # __str__ allows args to be printed directly,
 
-def flush_remains(the_file, k, new_item_line):
+def write_proto_head(the_file, db_info, k):
+    write_line = "syntax = {}".format("'proto3';")            
+    the_file.write(write_line + '\n')   
+
+    write_line = "import 'google/protobuf/timestamp.proto';"         
+    the_file.write(write_line + '\n')
+    write_line = "import 'google/protobuf/any.proto';"         
+    the_file.write(write_line + '\n')    
+    write_line = "import 'protoc-gen-swagger/options/annotations.proto';"         
+    the_file.write(write_line + '\n') 
+    write_line = "import 'google/api/annotations.proto';"         
+    the_file.write(write_line + '\n')                 
+    write_line = "package {};".format(db_info["database"].capitalize())            
+    the_file.write(write_line + '\n')
+    the_file.write('\n')               
+    service_name = k.capitalize() + "Service"            
+    write_line = "service {} {}".format(service_name, '{') 
+    the_file.write(write_line + '\n')
+    svc_list_option = "      option (google.api.http) = {{ get: {}{} }};\n".format(db_info['api'], k)
+    write_line = "  rpc list{}s(Empty) returns ({}List) {{ \n \t {} }};".format(k.capitalize(), k.capitalize(), svc_list_option)
+    the_file.write(write_line + '\n')
+    svc_create_option = "      option (google.api.http) = {{  \n \t\t\t\t\t\t post: {}{} \n \t\t\t\t\t\t body: '*' }};\n".format(db_info['api'], k)         
+    write_line = "  rpc create{}(new{}) returns ({}) {{ \n \t {} }};".format(k.capitalize() , k.capitalize(), 'result', svc_create_option)          
+    the_file.write(write_line + '\n')    
+    svc_read_option = "      option (google.api.http) = {{ get: {}{} }};".format(db_info['api'], k)   
+    write_line = "  rpc read{}({}Id) returns ({}) {{ \n \t {} }};".format(k.capitalize(), k.capitalize() , k.capitalize(), svc_read_option)          
+    the_file.write(write_line + '\n')
+    svc_update_option = "      option (google.api.http) = {{ \n \t\t\t\t\t\tput: {}{} \n \t\t\t\t\t\t body: '*' }};\n".format(db_info['api'], k)        
+    write_line = "  rpc update{}({}) returns ({})  {{ \n \t {} }};".format(k.capitalize() , k.capitalize(), 'result', svc_update_option)
+    the_file.write(write_line + '\n')
+    # svc_delete_option = "      option (google.api.http) = {{ \n \t\t\t\t\t\tdelete: {}{} \n\t\t\t\t\t\t body: '*' }};\n".format(db_info['api'], k)                            
+    svc_delete_option = "      option (google.api.http) = {{ \n \t\t\t\t\t\tdelete: {}{} \n\t\t\t\t\t\t body: '*' }};\n".format(db_info['api'], k)        
+    # write_line = "  rpc delete{}({}) returns ({}) {};".format(k.capitalize() , k.capitalize(), 'result', svc_delete_option)
+    write_line = "  rpc delete{}({}) returns ({})  {{ \n \t {} }};".format(k.capitalize() , k.capitalize(), 'result', svc_delete_option)
+    the_file.write(write_line + '\n')
+    write_line = "{}".format('}')  
+    the_file.write(write_line + '\n')
+    the_file.write('\n')
+    new_item_line = []
+    new_item_line.append("message new{} {}".format(k.capitalize(), '{') )                           
+    write_line = "message {} {}".format(k.capitalize(), '{')
+  
+    the_file.write(write_line + '\n')          
+    return new_item_line
+
+def write_proto_bottom(the_file, k, new_item_line):
     write_line = "{}".format('}')             
     the_file.write(write_line + '\n')
     the_file.write('\n')             
@@ -350,40 +440,6 @@ def flush_remains(the_file, k, new_item_line):
     the_file.write(write_line + '\n')              
     write_line = "{}".format('}')  
     the_file.write(write_line)                            
-
-def write_file_head(the_file, db_info, k):
-    write_line = "syntax = {}".format("'proto3';")            
-    the_file.write(write_line + '\n')   
-
-    write_line = "import 'google/protobuf/timestamp.proto';"         
-    the_file.write(write_line + '\n')
-
-    write_line = "import 'google/api/annotations.proto';"         
-    the_file.write(write_line + '\n')             
-    write_line = "package {};".format(db_info["database"].capitalize())            
-    the_file.write(write_line + '\n')
-    the_file.write('\n')               
-    service_name = k.capitalize() + "Service"            
-    write_line = "service {} {}".format(service_name, '{') 
-    the_file.write(write_line + '\n')
-    write_line = "  rpc list{}s(Empty) returns ({}List) {}".format(k.capitalize(), k.capitalize(), '{}')
-    the_file.write(write_line + '\n')
-    write_line = "  rpc read{}({}Id) returns ({}) {}".format(k.capitalize(), k.capitalize() , k.capitalize(), '{}')          
-    the_file.write(write_line + '\n')  
-    write_line = "  rpc create{}(new{}) returns ({}) {}".format(k.capitalize() , k.capitalize(), 'result', '{}')          
-    the_file.write(write_line + '\n')
-    write_line = "  rpc update{}({}) returns ({}) {}".format(k.capitalize() , k.capitalize(), 'result', '{}')          
-    the_file.write(write_line + '\n')                         
-    write_line = "  rpc delete{}({}) returns ({}) {}".format(k.capitalize() , k.capitalize(), 'result', '{}')          
-    the_file.write(write_line + '\n')
-    write_line = "{}".format('}')  
-    the_file.write(write_line + '\n')
-    the_file.write('\n')
-    new_item_line = []
-    new_item_line.append("message new{} {}".format(k.capitalize(), '{') )                           
-    write_line = "message {} {}".format(k.capitalize(), '{') 
-    the_file.write(write_line + '\n')          
-    return new_item_line
 
 def get_nosql_schema(db_info):
     try:
@@ -436,6 +492,9 @@ def get_sql_schema(db_info):
     conn.close()
 
 def compile_protos():
+
+    # protoc -I. -I"%GOPATH%/src/github.com/grpc-ecosystem/grpc-gateway/third_party/googleapis" 
+    # --swagger_out=logtostderr=true:. webservice.proto    
     fs = os.listdir()
     for f in fs:
         if f.find(".proto")>-1:
@@ -466,7 +525,7 @@ def main():
     log(">>>>> Welcome to DB2PB CLI", color="blue", figlet=False)
     # log("CLI : >", color="blue", figlet=True)
 
-    db_info = app_data()
+    db_info = get_user_input()
     if not os.path.exists(db_info['proto_folder']):
         os.mkdir(db_info['proto_folder'])
     os.chdir(db_info['proto_folder'])
@@ -482,7 +541,8 @@ def main():
                 shutil.rmtree(file_path)
         except Exception as e:
             print('Failed to delete %s. Reason: %s' % (file_path, e))       
-    if db_info["sqlnosql"] == 'SQL' :
+    print(''.join(db_info["sqlnosql"]))
+    if ''.join(db_info["sqlnosql"]) == 'SQL' :
         get_sql_schema(db_info)
     else:  
         get_nosql_schema(db_info)  
