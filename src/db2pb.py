@@ -10,19 +10,10 @@ import inspect
 import numpy as np
 from PyInquirer import style_from_dict, Token, Separator
 from PyInquirer import prompt, ValidationError, Validator
-# from pymongo_schema.compare import compare_schemas_bases
-# from pymongo_schema.export import transform_data_to_file
-from pymongo_schema.extract import extract_pymongo_client_schema
-# from pymongo_schema.filter import filter_mongo_schema_namespaces
-# from pymongo_schema.tosql import mongo_schema_to_mapping
 import pymongo
-# from pymongo_schema.extract import extract_pymongo_client_schema
 from termcolor import colored
 from pyfiglet import figlet_format
-# from mongoschema import Schema
-
-import json as json
-from pprint import pprint
+ 
 try:
     import colorama
     colorama.init()
@@ -101,7 +92,6 @@ class FilePathValidator(Validator):
             raise ValidationError(
                 message="You can't leave this blank", cursor_position=len(value.text)
             )
-
 
 class NumberValidator(Validator):
     def validate(self, document):
@@ -201,7 +191,6 @@ class dbtype2pbtype(object):
         self.clob =  "fixed64"
         self.enum = "Enum"
         self.set =  "string"
-
 
 class Sql:
     def generate_proto(self):
@@ -316,14 +305,7 @@ def generate_sql_protos(items, db_info):
         db2pb = dict(dbtype2pbtype())
         group_table = groupby(table_tuple, itemgetter(0))
         for k, g in group_table:
-            required_list = []
-            # my_option = (
-            #     "option (grpc.gateway.protoc_gen_swagger.options.openapiv2_schema) = { \
-            #     '\t''\t' json_schema : { '\n' '\t'", \
-            #     '\t' '\t'title : {0} '\n'".format(k.capitalize()),
-            #     "description" :  "'\t' description : 'Does something neat' + '\n'",
-            #     "required" : "'\t' required: ['+ {1} + '] '\n' } '\n' }};"                     
-            # )            
+            required_list = []          
             my_option = "option (grpc.gateway.protoc_gen_swagger.options.openapiv2_schema) = { "
             my_json_schema = "\n json_schema : { \n"
             my_title = f"\t title : {k.capitalize()} \n"
@@ -333,11 +315,9 @@ def generate_sql_protos(items, db_info):
             with open(k + '.proto', 'a') as the_file:
                 new_item_line = write_proto_head(the_file, db_info, k)
                 field_list = []
-                # option = "{} {} {} {} {}".format(my_option,my_json_schema, my_title, my_description, my_required )
                 index = 1
                 for tup in list(g):
                     pbtype = db2pb.get(tup[2])
-                    # for key, value in db2pb.items(): 
                     required_list.append(tup[1])
                     if tup[2] != 'enum':
                         write_sub_line = f" {pbtype} {tup[1].ljust(len(tup[1]) + 1)} = {index};"
