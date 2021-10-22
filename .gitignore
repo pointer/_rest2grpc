@@ -37,3 +37,5 @@ proto/
 src/__pycache__/
 src/iterabless.py
 src/mongodb_collect.py
+code_snippets/
+tests/a_bit_of_everything.proto

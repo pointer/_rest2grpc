@@ -1,19 +1,27 @@
 # -*- coding: utf-8 -*-
 from __future__ import print_function, unicode_literals
-import os, sys, io
+import os, sys, io, re
 import subprocess
-import six
+import six, pprint, json
 from itertools import groupby
 from operator import itemgetter
 import mariadb
 import inspect
+import shutil
+import operator
 import numpy as np
 from PyInquirer import style_from_dict, Token, Separator
 from PyInquirer import prompt, ValidationError, Validator
-import pymongo
+import pymongo, yaml
+# from pymongo_schema.compare import compare_schemas_bases
+# from pymongo_schema.export import transform_data_to_file
+from pymongo_schema.extract import extract_pymongo_client_schema
+# from pymongo_schema.filter import filter_mongo_schema_namespaces
+# from pymongo_schema.tosql import mongo_schema_to_mapping
+
 from termcolor import colored
 from pyfiglet import figlet_format
- 
+from search import Searcher
 try:
     import colorama
     colorama.init()
@@ -151,8 +159,10 @@ class dbtype2pbtype(object):
         self.object =  "fixed64"
         self.array =  "bytes"
         self.binData =  "bytes"
+        self.general_scalar = "google.protobuf.Any"
         self.undefined =  "google.protobuf.Any"
         self.objectId =  "google.protobuf.Any"
+        self.oid =  "google.protobuf.Any"                               
         self.bool =  "bool"
         self.null =  "bytes"
         self.regex = "string"
@@ -173,6 +183,7 @@ class dbtype2pbtype(object):
         self.text =  "string"
         self.tinytext =  "string"    
         self.boolean =  "bool"
+        self.Boolean =  "bool"        
         self.bit =  "bool"
         self.float =  "float"
         self.real =  "double"
@@ -207,15 +218,15 @@ def get_user_input():
             "name": "sqlnosql",
             "choices": [
                 Separator("  "),
-                {"name": "SQL" , "checked": True},
-                {"name": "NoSQL", "checked": False},
+                {"name": "SQL" , "checked": False},
+                {"name": "NoSQL", "checked": True},
             ],
         },
         {
             "type": "input",
             "name": "dbms",
             "message": "What's your DBMS?",
-            "default": "mariadb",
+            "default": "mongodb",
         },
         {
             "type": "input",
@@ -233,7 +244,7 @@ def get_user_input():
             "type": "input",
             "name": "database",
             "message": "Enter your db name: ",
-            "default": "sakila",
+            "default": "Squaddb",
         },
         {
             "type": "input",
@@ -245,7 +256,7 @@ def get_user_input():
             "type": "input",
             "name": "port",
             "message": "Enter your db port: ",
-            "default": "3306",
+            "default": "27017",
             "validate": NumberValidator,
             "filter": lambda val: int(val),
         },
@@ -255,6 +266,12 @@ def get_user_input():
             "message": "Enter your working folder: ",
             "default": "proto",
         },
+        {
+            "type": "input",
+            "name": "router_path",
+            "message": "Enter your router path: ",
+            "default": "C:\\_dev\\shiftschedulerback\\app\\routes",
+        },                
         {
             "type": "input",
             "name": "api",
@@ -270,11 +287,13 @@ def get_user_input():
 def generate_nosql_protos(collection, db_info):
     try:
         # folder = "proto"
-        log("Generating proto files in proto folder", "green")
-        db2pb = dict(dbtype2pbtype())                   
-        for values in list(collection.values()):   
-            for k, items in values.items():               
-                # print('>>>>>>>>>>', k, ' === ', type(value))
+        db2pb = dict(dbtype2pbtype())
+                               
+        for values in list(collection.values()): 
+            for k, items in values.items():   
+            # if k in routes:             
+                log_string = f">>>>>> >>>>> Generating proto file {k.capitalize()} in folder {db_info['proto_folder']}"
+                log(log_string, "yellow")                
                 with open(k.capitalize() + '.proto', 'a') as the_file:
                     new_item_line = write_proto_head(the_file, db_info, k)          
                     index = 1
@@ -282,18 +301,23 @@ def generate_nosql_protos(collection, db_info):
                         if type(item_val) == dict:
                             for item_kk, item_val_val in item_val.items():
                                 if item_kk == '_id' or item_kk == 'createdAt' or  item_kk == 'updatedAt':
-                                    continue                                                                
-                                pbtype = db2pb.get(item_val_val['type'])
+                                    continue
+                                pbtype = db2pb.get(item_val_val['type'].lower())                                
                                 write_line = "  {} {} = {}; ".format(pbtype, item_kk.ljust(len(item_kk) + 1), index) 
                                 new_item_line.append(write_line)                                
                                 the_file.write(write_line + '\n')                                        
                                 index += 1
                     write_proto_bottom(the_file, k, new_item_line)
-                                                                                     
-        log("Generating proto files done", "green")                 
+
+                    log_string = f">>>>>> >>>>> DONE Generating proto file {k.capitalize()} in folder {db_info['proto_folder']}"                                                         
+                    log(log_string, "green")                 
+
     except Exception as err:
-        print(type(err))    # the exception instance
-        print(err)          # __str__ allows args to be printed directly,
+        err_string = f">>>>>> >>>>> Error Generating proto file {k.capitalize()} in folder {db_info['proto_folder']} : {err}"                                                                                   
+        log(err_string, "red")  
+        log(type(err), "red")                
+        # print(type(err))    # the exception instance
+        # print(err)          # __str__ allows args to be printed directly,
  
 def generate_sql_protos(items, db_info):
     try:
@@ -324,7 +348,8 @@ def generate_sql_protos(items, db_info):
                         new_item_line.append(write_sub_line)
                         field_list.append(write_sub_line) 
                     else :
-                        write_sub_line = " {} {} {} \t\t TBD{} = 0; \n {} {} {} = {};" \
+                        write_sub_line = " {} {} {} \t\t FALSE = 0; \n\
+                                           TRUE = 1; \n {} {} {} = {};" \
                             .format(pbtype, tup[1].capitalize(), '{\n', index,'}\n', tup[1].capitalize(),tup[1], index)
                         new_item_line.append(write_sub_line)
                         field_list.append(write_sub_line) 
@@ -343,40 +368,54 @@ def generate_sql_protos(items, db_info):
         print(err)          # __str__ allows args to be printed directly,
 
 def write_proto_head(the_file, db_info, k):
-    write_line = "syntax = {}".format("'proto3';")            
+    write_line = "syntax = {}".format('"proto3";')            
     the_file.write(write_line + '\n')   
 
-    write_line = "import 'google/protobuf/timestamp.proto';"         
+    write_line = 'import "google/protobuf/timestamp.proto";'         
     the_file.write(write_line + '\n')
-    write_line = "import 'google/protobuf/any.proto';"         
+    write_line = 'import "google/protobuf/any.proto";'
     the_file.write(write_line + '\n')    
-    write_line = "import 'protoc-gen-swagger/options/annotations.proto';"         
-    the_file.write(write_line + '\n') 
-    write_line = "import 'google/api/annotations.proto';"         
-    the_file.write(write_line + '\n')                 
-    write_line = "package {};".format(db_info["database"].capitalize())            
+    write_line = "import 'google/api/http.proto';"         
     the_file.write(write_line + '\n')
-    the_file.write('\n')               
+    write_line = "import 'google/api/httpbody.proto';"         
+    the_file.write(write_line + '\n') 
+    db_info['googleapis_path'] = db_info['googleapis_path'].replace('\\', '/')    
+    # "{db_info["googleapis_path"]}/
+    #write_line = f'import "protoc-gen-openapiv2/options/annotations.proto";'
+    write_line = "import 'google/api/annotations.proto';"              
+    the_file.write(write_line + '\n')                 
+    write_line = "package {}.service.v1;".format(db_info["database"].capitalize())            
+    the_file.write(write_line + '\n')
+    the_file.write('\n')  
+    option_go_package = f'option go_package = "github.com/yourorg/yourprotos/gen/go/{db_info["database"]}/service/v1";'        
+    the_file.write(option_go_package + '\n')
+    the_file.write('\n')  
     service_name = k.capitalize() + "Service"            
     write_line = "service {} {}".format(service_name, '{') 
     the_file.write(write_line + '\n')
-    svc_list_option = "      option (google.api.http) = {{ get: {}{} }};\n".format(db_info['api'], k)
-    write_line = "  rpc list{}s(Empty) returns ({}List) {{ \n \t {} }};".format(k.capitalize(), k.capitalize(), svc_list_option)
-    the_file.write(write_line + '\n')
-    svc_create_option = "      option (google.api.http) = {{  \n \t\t\t\t\t\t post: {}{} \n \t\t\t\t\t\t body: '*' }};\n".format(db_info['api'], k)         
-    write_line = "  rpc create{}(new{}) returns ({}) {{ \n \t {} }};".format(k.capitalize() , k.capitalize(), 'result', svc_create_option)          
-    the_file.write(write_line + '\n')    
-    svc_read_option = "      option (google.api.http) = {{ get: {}{} }};".format(db_info['api'], k)   
-    write_line = "  rpc read{}({}Id) returns ({}) {{ \n \t {} }};".format(k.capitalize(), k.capitalize() , k.capitalize(), svc_read_option)          
-    the_file.write(write_line + '\n')
-    svc_update_option = "      option (google.api.http) = {{ \n \t\t\t\t\t\tput: {}{} \n \t\t\t\t\t\t body: '*' }};\n".format(db_info['api'], k)        
-    write_line = "  rpc update{}({}) returns ({})  {{ \n \t {} }};".format(k.capitalize() , k.capitalize(), 'result', svc_update_option)
-    the_file.write(write_line + '\n')
-    # svc_delete_option = "      option (google.api.http) = {{ \n \t\t\t\t\t\tdelete: {}{} \n\t\t\t\t\t\t body: '*' }};\n".format(db_info['api'], k)                            
-    svc_delete_option = "      option (google.api.http) = {{ \n \t\t\t\t\t\tdelete: {}{} \n\t\t\t\t\t\t body: '*' }};\n".format(db_info['api'], k)        
-    # write_line = "  rpc delete{}({}) returns ({}) {};".format(k.capitalize() , k.capitalize(), 'result', svc_delete_option)
-    write_line = "  rpc delete{}({}) returns ({})  {{ \n \t {} }};".format(k.capitalize() , k.capitalize(), 'result', svc_delete_option)
-    the_file.write(write_line + '\n')
+    routes = db_info['routes']
+    # if k.endswith('s'):
+    #     k = k.removesuffix('s')  
+    if 'get' in routes[k]:
+        svc_read_option = "      option (google.api.http) = {{ get: '{}{}' \n}};".format(db_info['api'], k)   
+        write_line = "  rpc {}({}Id) returns ({}) {{ \n \t {} }}".format(routes[k]['get'], k.capitalize(), k.capitalize(), svc_read_option)          
+        the_file.write(write_line + '\n')
+    if 'getAll' in routes[k]:        
+        svc_list_option = "      option (google.api.http) = {{ get: '{}{}' \n}};\n".format(db_info['api'], k)
+        write_line = "  rpc {}(Empty) returns ({}List) {{ \n \t {} }}".format(routes[k]['getAll'], k.capitalize(), svc_list_option)
+        the_file.write(write_line + '\n')
+    if 'post' in routes[k]:    
+        svc_create_option = "      option (google.api.http) = {{  \n \t\t\t\t\t\t post: '{}{}' \n \t\t\t\t\t\t body: '*' \n}};\n".format(db_info['api'], k)         
+        write_line = "  rpc {}(new{}) returns ({}) {{ \n \t {} }}".format(routes[k]['post'] , k.capitalize(), 'result', svc_create_option)          
+        the_file.write(write_line + '\n')    
+    if 'put' in routes[k] or 'patch' in routes[k]:
+            svc_update_option = "      option (google.api.http) = {{ \n \t\t\t\t\t\tput: '{}{}' \n \t\t\t\t\t\t body: '*' \n}};\n".format(db_info['api'], k)        
+            write_line = "  rpc {}({}) returns ({})  {{ \n \t {} }}".format(routes[k]['patch'] , k.capitalize(), 'result', svc_update_option)
+            the_file.write(write_line + '\n')
+    if 'delete' in routes[k]:        
+        svc_delete_option = "      option (google.api.http) = {{ \n \t\t\t\t\t\tdelete: '{}{}' \n\t\t\t\t\t\t body: '*' \n}};\n".format(db_info['api'], k)        
+        write_line = "  rpc {}({}) returns ({})  {{ \n \t {} }}".format(routes[k]['delete'] , k.capitalize(), 'result', svc_delete_option)
+        the_file.write(write_line + '\n')
     write_line = "{}".format('}')  
     the_file.write(write_line + '\n')
     the_file.write('\n')
@@ -426,14 +465,18 @@ def get_nosql_schema(db_info):
         pymongo_client = pymongo.MongoClient(db_info["host"], 27017, maxPoolSize=50)
         db = pymongo_client[db_info["database"]]  
         collections = db.list_collection_names()
-        for collection in enumerate(collections):    
-            coll_schema = extract_pymongo_client_schema(pymongo_client,
-                                                            database_names=db_info["database"],
-                                                            collection_names=collection)
-            generate_nosql_protos(coll_schema, db_info )
+        for collection in enumerate(collections): 
+            if collection[1] in db_info['routes']   :
+                # if not operator.contains(collection[1], filename):
+                #     continue                                                             
+                coll_schema = extract_pymongo_client_schema(pymongo_client,
+                                                                database_names=db_info["database"],
+                                                                collection_names=collection)
+                generate_nosql_protos(coll_schema, db_info )
     except Exception as err:
-        print(type(err))    # the exception instance
-        print(err)          # __str__ allows args to be printed directly,   
+        err_string = f">>>>>> >>>>> Error Generating proto file {k.capitalize()} in folder {db_info['proto_folder']} : {err}"                                                                                   
+        log(err_string, "red")  
+        log(type(err), "red")           # __str__ allows args to be printed directly,   
     
 def get_sql_schema(db_info):
     try:
@@ -471,15 +514,38 @@ def get_sql_schema(db_info):
     # Close Connection
     conn.close()
 
-def compile_protos():
+def compile_protos(googleapis_path):
 
     # protoc -I. -I"%GOPATH%/src/github.com/grpc-ecosystem/grpc-gateway/third_party/googleapis" 
-    # --swagger_out=logtostderr=true:. webservice.proto    
+    # --swagger_out=logtostderr=true:. webservice.proto  
+    cwd = os.getcwd()
+    print(cwd)       
     fs = os.listdir()
     for f in fs:
         if f.find(".proto")>-1:
-            print(f)
-            command='protoc '+f+' --cpp_out=.'
+            GOPATH = os.environ.get("gopath")            
+            log_string = f"===== Compiling proto file {f} ====== "                                                                                   
+            log(log_string, "blue")  
+            command = (
+                f"protoc --proto_path={cwd} "
+                f"-I${GOPATH}/pkg/mod/google.golang.org/genproto@v0.0.0-20200513103714-09dca8ec2884/googleapis " 
+                f"-I${GOPATH}/pkg/mod/github.com/grpc-ecosystem/grpc-gateway@v1.16.0/third_party/googleapis "	  
+                f"-I${GOPATH}/pkg/mod/github.com/golang/protobuf@v1.5.2/ptypes "
+                f"-I. "
+                f"--plugin=protoc-gen-grpc-gateway=${GOPATH}/bin/protoc-gen-grpc-gateway --allow_delete_body=true "
+                f"--cpp_out=plugins=grpc:. "
+                f"--grpc-gateway_out=logtostderr=true:allow_delete_body=true:. "
+                f"{f}"
+            )
+            # command=(
+            #     f'protoc --proto_path={cwd} '
+            #     f'--proto_path={googleapis_path} '
+            #     f'--swagger_out=logtostderr=true:. '
+            #     f'--cpp_out=./ --grpc_cpp_out=./server ' 
+            #     f'{f}'               
+            # )
+            
+            print(command)
             print("This process detail: \n", execute(command))
             # os.system(s)
 
@@ -493,8 +559,13 @@ def execute(cmd):
     (result, error) = process.communicate()
     rc = process.wait()
     if rc != 0:
-        print( "Error: failed to execute command:", cmd)
-        print(error)
+        err_string = f"======= Error: failed to execute command: {cmd}"                                                                                   
+        log(err_string, "red") 
+        err_string = f"======= Return error: {error}"                                                                                   
+        log(err_string, "yellow")         
+        # print( "Error: failed to execute command:", cmd)
+        # print(error)
+        return error
     return result
 
 # @click.command()
@@ -504,12 +575,16 @@ def main():
     """
     log(">>>>> Welcome to DB2PB CLI", color="blue", figlet=False)
     # log("CLI : >", color="blue", figlet=True)
+   
+    with open("./src/config.yaml", "r") as yamlfile:
+        data = yaml.load(yamlfile, Loader=yaml.FullLoader)
 
-    db_info = get_user_input()
+    # db_info = get_user_input()
+    db_info = data[0]['db_info'] 
     if not os.path.exists(db_info['proto_folder']):
         os.mkdir(db_info['proto_folder'])
     os.chdir(db_info['proto_folder'])
-    import shutil
+
     cwd = os.getcwd()
     # print(cwd)     
     for filename in os.listdir(cwd):
@@ -521,12 +596,16 @@ def main():
                 shutil.rmtree(file_path)
         except Exception as e:
             print('Failed to delete %s. Reason: %s' % (file_path, e))       
-    print(''.join(db_info["sqlnosql"]))
+    # print(''.join(db_info["sqlnosql"]))  
+    verbs = ".get|.post|.patch|.delete"    
+    Search = Searcher(db_info['router_path'], verbs)
+    Search.find()
+    db_info['routes'] = Search.getResults()
     if ''.join(db_info["sqlnosql"]) == 'SQL' :
         get_sql_schema(db_info)
     else:  
         get_nosql_schema(db_info)  
-    # compile_protos()
+    compile_protos(db_info['googleapis_path'])
 
 if __name__ == "__main__":
     main()
